@@ -1,10 +1,10 @@
 # MeitouP2P
 
-A C# session connector for **one host and one guest on the same Windows PC**, tested with stock MeitouClient 0.20.0. It starts offline. A mode can register a request handler, open a loopback TCP session, and exchange messages through Meitou's API 2 dependency system. The first mode is MeitouP2P-Coop. [Co-op source and Stoat walk replay](https://github.com/mattresspad/MeitouP2P-Coop)
+A C# session connector for **one host and one guest on the same Windows PC**. Both players use the same stock MeitouClient build, either **0.20.0 or 0.20.1**. The connector starts offline. A mode can register a request handler, open a loopback TCP session, and exchange messages through Meitou's API 2 dependency system. The first mode is MeitouP2P-Coop. [Co-op source and Stoat walk replays](https://github.com/mattresspad/MeitouP2P-Coop)
 
 ## Build just the connector
 
-Install Git, PowerShell, Python 3 and the .NET 11 SDK. Extract the Windows x64 MeitouClient 0.20.0 release and set `MEITOU_DIR` to the directory containing `MeitouClient.dll`. The visible game also requires your own Kenshi installation. [MeitouClient 0.20.0](https://github.com/VlcekM/MeitouClient/releases/tag/v0.20.0)
+Install Git, PowerShell, Python 3 and the .NET 11 SDK. Extract either supported Windows x64 release and set `MEITOU_DIR` to the directory containing `MeitouClient.dll`. Use that directory for the build and for launching the windows. The visible game also requires your own Kenshi installation. [MeitouClient 0.20.1](https://github.com/VlcekM/MeitouClient/releases/tag/v0.20.1) · [MeitouClient 0.20.0](https://github.com/VlcekM/MeitouClient/releases/tag/v0.20.0)
 
 ```powershell
 git clone https://github.com/mattresspad/MeitouP2P.git
@@ -13,7 +13,15 @@ cd MeitouP2P
 python tools/smoke.py --connector-only
 ```
 
-The build stages `artifacts/mods/MeitouP2P`. Copy that directory into the Kenshi `mods` folder used by each test client and enable it in each launcher. In disposable games, open F10. Choose **P2P Host** in one window and **P2P Join** in the other. Both use port 42870 by default. **P2P Ping** followed by **P2P Status** shows the reply. **P2P Leave** closes the session. Rejoining establishes a new peer identity.
+The build stages `artifacts/mods/MeitouP2P` and stamps the game release into its manifest. Build again when switching game releases. Copy the staged directory into the Kenshi `mods` folder used by each test client and enable it in each launcher. In disposable games, open F10. Choose **P2P Host** in one window and **P2P Join** in the other. Both use port 42870 by default. **P2P Ping** followed by **P2P Status** shows the reply. **P2P Leave** closes the session. Rejoining establishes a new peer identity.
+
+To check the build boundary, set `MEITOU_OTHER_DIR` to the other extracted release. Build the same connector revision in a second checkout. Both peers then load their own release's DLLs with the same fixture and mode list. The test checks that the host refuses the mixed pair and then connects a matching guest and pings.
+
+```powershell
+git worktree add --detach ../MeitouP2P-other HEAD
+../MeitouP2P-other/build.ps1 -MeitouDir $env:MEITOU_OTHER_DIR
+python tools/smoke.py --connector-only --other-build-checkout ../MeitouP2P-other
+```
 
 ## Build and test with Co-op
 

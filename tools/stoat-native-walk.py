@@ -1,4 +1,4 @@
-"""Native-input acceptance trial for the two visible 0.20.0 Stoat windows (Windows)."""
+"""Native-input acceptance trial for the two visible Stoat windows on stock Windows Meitou."""
 import argparse
 import ctypes
 from ctypes import wintypes

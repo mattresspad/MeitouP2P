@@ -1,5 +1,7 @@
 using System.Numerics;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Meitou.Content;
 using Meitou.Data;
 using Meitou.Data.Fcs;
@@ -9,6 +11,19 @@ using Meitou.Simulation.Movement;
 
 // Prepare or drive the released loader and its registered F10 callbacks without a GPU.
 const string template = "1-p2p-test.base";
+var build = typeof(IMod).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+if (build is null || !CodeModVersion.TryParse(build, out var version))
+    throw new InvalidDataException($"Cannot determine the Meitou loader version from '{build}'.");
+if (args is ["target-manifest", var path, var expectedBuild])
+{
+    if (build != expectedBuild) throw new InvalidOperationException($"Probe loads {build}, expected {expectedBuild}.");
+    var manifest = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+    if (manifest["gameVersion"]?.GetValue<string>() is { } range && !CodeModVersionRange.Parse(range).Contains(version))
+        throw new InvalidDataException($"{path} declares '{range}', which excludes Meitou {version.Release}.");
+    manifest["gameVersion"] = $"={version.Release}";
+    Console.WriteLine(manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    return;
+}
 if (args is ["stoat-start", var output])
 {
     var file = new FcsFile { Author = "MeitouP2P-Coop", NextId = 4 };
@@ -60,11 +75,11 @@ if (args is ["author", var installPath, var project, var zip])
     return;
 }
 #endif
-if (args is not ["peer", var mode]) throw new ArgumentException("Expected peer, fixture or author.");
+if (args is not ["peer", var mode]) throw new ArgumentException("Expected peer, fixture, stoat-start, author or target-manifest.");
 var install = GameInstall.Open(Environment.GetEnvironmentVariable("KENSHI_PATH")!);
 var data = GameDatabase.Load(LoadOrder.FromInstall(install));
 var mods = ModHost.EnabledCodeMods(install);
-CodeModVersion.TryParse("0.20.0", out var version);
+Console.WriteLine($"Loading mods with Meitou {version}.");
 World? world = null;
 var loaded = ModHost.Load(new ModHostOptions(mods, data, null!, () => world, GameVersion: version));
 if (loaded.Mods.Count != mods.Count || mods.Count != (mode == "connector" ? 1 : 2))

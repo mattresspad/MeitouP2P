@@ -15,12 +15,15 @@ from contextlib import ExitStack, contextmanager
 root = Path(__file__).resolve().parents[1]
 args = argparse.ArgumentParser(description=__doc__)
 args.add_argument("--dotnet", default="dotnet")
+args.add_argument("--other-build-checkout", type=Path, metavar="DIR",
+                  help="Test refusal of a guest from a connector checkout built against the other Meitou release")
 suite = args.add_mutually_exclusive_group()
 suite.add_argument("--connector-only", action="store_true", help="Run the standalone connector handshake, ping and leave")
 suite.add_argument("--maestro", nargs="?", const="", metavar="AUTHOR_PROBE_DLL",
                    help="Export a role with a Maestro-enabled Probe; optionally use a separately built authoring probe")
 options = args.parse_args()
-probe = [options.dotnet, str(root / "tools/Probe/bin/Release/net11.0/Probe.dll")]
+probe_dll = Path("tools/Probe/bin/Release/net11.0/Probe.dll")
+probe = [options.dotnet, str(root / probe_dll)]
 run = Path(tempfile.mkdtemp(prefix="loopback-", dir=root / "artifacts"))
 data = run / "data"
 data.mkdir()
@@ -30,11 +33,6 @@ cfg = data / "mods.cfg"
 cfg.write_text("MeitouP2P.mod\nMeitouP2P-Coop.mod\n", encoding="utf-8")
 env = dict(os.environ, KENSHI_PATH=str(run), MEITOU_MODS_CFG=str(cfg))
 subprocess.run([*probe, "fixture", data], env=env, check=True)
-standalone = run / "connector-only"
-(standalone / "data").mkdir(parents=True)
-shutil.copy(data / "gamedata.base", standalone / "data")
-(standalone / "data/mods.cfg").write_text("MeitouP2P.mod\n", encoding="utf-8")
-shutil.copytree(run / "mods/MeitouP2P", standalone / "mods/MeitouP2P")
 role = "Guest"
 if options.maestro is not None:
     project = run / "author" / "Stoat Roles"
@@ -56,12 +54,19 @@ if options.maestro is not None:
     role = "Stoat Scout"
 
 
+def connector_profile(name, checkout):
+    install = run / name
+    (install / "data").mkdir(parents=True)
+    shutil.copy(data / "gamedata.base", install / "data")
+    config = install / "data/mods.cfg"
+    config.write_text("MeitouP2P.mod\n", encoding="utf-8")
+    shutil.copytree(checkout / "artifacts/mods/MeitouP2P", install / "mods/MeitouP2P")
+    return dict(env, KENSHI_PATH=str(install), MEITOU_MODS_CFG=str(config))
+
+
 @contextmanager
-def peer(mode, name):
-    profile = env
-    if mode == "connector":
-        profile = dict(env, KENSHI_PATH=str(standalone), MEITOU_MODS_CFG=str(standalone / "data/mods.cfg"))
-    with (subprocess.Popen([*probe, "peer", mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+def peer(mode, name, profile=env, peer_probe=probe):
+    with (subprocess.Popen([*peer_probe, "peer", mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, text=True, env=profile, bufsize=1) as proc,
           (run / (name + ".log")).open("w", encoding="utf-8", buffering=1) as log):
         responses = queue.Queue()
@@ -83,7 +88,7 @@ def peer(mode, name):
         def receive():
             value = responses.get(timeout=12)
             if value is None:
-                raise RuntimeError("Probe exited")
+                raise RuntimeError(f"{name} exited with status {proc.wait(timeout=4)}. See {log.name}")
             return value
 
         def call(command):
@@ -135,9 +140,19 @@ def observe(guest, fragment):
 
 
 with ExitStack() as peers:
-    connector = peers.enter_context(peer("connector", "connector-host"))
-    other = peers.enter_context(peer("connector", "connector-guest"))
-    connect(connector, other, start(connector))
+    standalone = connector_profile("connector-only", root)
+    connector = peers.enter_context(peer("connector", "connector-host", standalone))
+    other = peers.enter_context(peer("connector", "connector-guest", standalone))
+    connector_port = start(connector)
+    if options.other_build_checkout:
+        checkout = options.other_build_checkout.resolve(strict=True)
+        other_probe = [options.dotnet, str((checkout / probe_dll).resolve(strict=True))]
+        with peer("connector", "other-build-guest", connector_profile("other-build", checkout), other_probe) as different:
+            different("P2P Join|" + connector_port)
+            wait_for(different, "P2P Status", "Incompatible")
+            wait_for(connector, "P2P Status", "Incompatible")
+            print("PASS mixed game builds refused with matching data and mode lists")
+    connect(connector, other, connector_port)
     other("P2P Ping")
     wait_for(other, "P2P Status", "Pong")
     other("P2P Leave")
